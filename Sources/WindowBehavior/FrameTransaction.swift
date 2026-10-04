@@ -70,8 +70,11 @@ public enum FrameTransaction {
 
     @discardableResult
     public static func resize(start: CGRect, delta: CGPoint, corner: Corner, area: CGRect,
-                              using access: some WindowFrameAccess) throws -> CGRect {
-        guard let frame = WindowGeometry.resize(start: start, delta: delta, corner: corner, area: area) else {
+                              using access: some WindowFrameAccess, grid: ResizeGrid = ResizeGrid()) throws -> CGRect {
+        let delta = grid.delta(start: start, raw: delta, corner: corner)
+        let gridMaximum = grid.maximum(in: area)
+        guard let frame = WindowGeometry.resize(start: start, delta: delta, corner: corner, area: area,
+                                                maximum: gridMaximum) else {
             throw FrameTransactionError.constraintsDoNotFit
         }
         let desired = rounded(frame)
@@ -113,7 +116,7 @@ public enum FrameTransaction {
         // Infer intrinsic limits only AFTER moving to an origin where the desired
         // size fits. A clamp at the previous origin is not an app maximum.
         var minimum = CGSize(width: 1, height: 1)
-        var maximum = CGSize(width: Double.greatestFiniteMagnitude, height: Double.greatestFiniteMagnitude)
+        var maximum = gridMaximum
         if accepted.width > desired.width + 0.5 { minimum.width = accepted.width }
         if accepted.height > desired.height + 0.5 { minimum.height = accepted.height }
         if accepted.width < desired.width - 0.5 { maximum.width = accepted.width }

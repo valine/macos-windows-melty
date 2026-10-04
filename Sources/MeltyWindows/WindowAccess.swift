@@ -262,6 +262,7 @@ final class FrameWriter {
     private var busy = false
     private var stopped = false
     private var lastRequest: FrameRequest?
+    private var resizeGrid = ResizeGrid()
     // Main-thread state, remembered only for this utility session.
     private static var pacingByPID: [pid_t: ResizePacing] = [:]
     private var pacing: ResizePacing
@@ -359,7 +360,7 @@ final class FrameWriter {
                 return
             }
             let began = ProcessInfo.processInfo.systemUptime
-            let failure = Self.apply(request, to: target)
+            let failure = Self.apply(request, to: target, grid: &self.resizeGrid)
             let duration = ProcessInfo.processInfo.systemUptime - began
             if let failure { Trace.write("frame failure app=\(target.bundleID) reason=\(failure)") }
             if failure != nil { self.animationScope.end() }
@@ -382,7 +383,7 @@ final class FrameWriter {
         }
     }
 
-    private static func apply(_ request: FrameRequest, to target: WindowTarget) -> String? {
+    private static func apply(_ request: FrameRequest, to target: WindowTarget, grid: inout ResizeGrid) -> String? {
         let began = ProcessInfo.processInfo.systemUptime
         let element = target.element
         // A slow first response must survive long enough to be measured. This
@@ -397,7 +398,12 @@ final class FrameWriter {
                 try FrameTransaction.setFrame(request.start, area: request.area, using: access)
             } else if let corner = request.corner {
                 let accepted = try FrameTransaction.resize(start: request.start, delta: request.delta,
-                                                            corner: corner, area: request.area, using: access)
+                                                            corner: corner, area: request.area, using: access, grid: grid)
+                if let wanted = WindowGeometry.resize(start: request.start, delta: request.delta, corner: corner, area: request.area) {
+                    let previous = grid.increments
+                    grid.record(requested: wanted.size, accepted: accepted.size)
+                    if previous != grid.increments { Trace.write("resize increments app=\(target.bundleID) grid=\(grid.increments)") }
+                }
                 Trace.write("resize start=\(request.start) area=\(request.area) accepted=\(accepted) reads=\(access.reads) moves=\(access.moves) sizes=\(access.sizes) ms=\(Int((ProcessInfo.processInfo.systemUptime - began) * 1000))")
             } else {
                 let frame = WindowGeometry.move(start: request.start, delta: request.delta, area: request.area)

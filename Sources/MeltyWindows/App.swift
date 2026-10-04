@@ -85,7 +85,7 @@ struct SettingsView: View {
                     Toggle("Left-drag solid backgrounds to move", isOn: $settings.leftMove)
                     Toggle("Right-drag anywhere to resize", isOn: $settings.rightResize)
                     Toggle("Native live resize (experimental)", isOn: $settings.nativeResize)
-                    Text("Uses macOS corner dragging for synchronized redraws, including display-edge pushing. Apps retain their native size increments and minimum sizes. Dragging past the opposite edge uses compatibility resizing.")
+                    Text("Uses macOS corner dragging to synchronize content redraws. Display-edge pushing switches to compatibility resizing for the rest of the gesture. Native app minimum sizes apply before that switch.")
                         .font(.caption).foregroundStyle(.secondary)
                     Toggle("Continue dragging at display edges", isOn: $settings.continueAtEdge)
                     Text("The press location selects the resize corner. The left and top bands use at most 30% of the window; the center resizes bottom/right. At a display edge, continued resizing grows the opposite side.")
