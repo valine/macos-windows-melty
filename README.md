@@ -299,3 +299,39 @@ The toggle defaults off; turning it off restores the existing resize behavior.
 Four geometry tests cover event anchoring, reversal, collision handoff on all
 edges, and negative-origin displays. Physical right-drag visual validation is
 required; unit tests cannot establish WindowServer presentation behavior.
+
+Version 0.1.10 removes the blanket gesture exclusion for the utility's own
+process. The settings window now has the resizable style and flexible content,
+with a 520 × 440 pt content minimum. Its controls still use the same background
+hit policy as other apps. Own-window writers skip the external Enhanced UI
+override and its synchronous quit-time restoration, avoiding self-IPC waits.
+The signed build and native-edge expansion of the settings content were checked;
+physical left/right gesture validation is separate from this UI check.
+
+Version 0.1.11 fixes the self-window crash introduced in 0.1.10. Crash reports
+showed AppKit's main-thread assertion in both accessibilityPerformRaise and
+AX position setters: self-targeted AX invokes AppKit on the calling thread.
+Own-window resolution, raising, frame transactions, and capture-time geometry
+verification now use the main queue; external targets retain the serial IPC
+worker. Resolution conservatively selects main inside visible own-window bounds
+and rechecks the resolved PID before accessing attributes. Two regression tests
+execute queued work and verify main-thread affinity for self and worker affinity
+for external targets. All 47 tests pass. Physical gesture retesting remains
+necessary because UI automation does not exercise our global right-drag tap.
+
+Version 0.1.12 keeps display collisions on the native event path. First it takes
+the active edge to the wall, closes that native segment, reads the accepted
+frame, and starts a segment at the opposite corner. Each axis switches
+independently and switches back on reversal. No AX size or position correction
+is issued for ordinary native resizing or display-edge pushing. An ideal
+geometry reference is kept separately from the app's accepted frame, so grid
+rounding does not become a fake minimum/maximum or a corrective window move.
+Returning to the original corner removes the wall's grid remainder to avoid
+accumulating a row/column of drift over repeated cycles.
+
+The compatibility path remains available with native resize disabled and for
+extreme compression past the original opposite edge. Native minimum sizes still
+apply during native segments. Model tests simulate discrete 10 × 20 pt sizing
+on all corners through repeated wall push/reversal cycles, with no drift or
+movement on stationary samples. All 48 tests pass; live visual validation of the
+new corner transitions is still required.

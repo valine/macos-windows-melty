@@ -19,6 +19,8 @@ private final class Gesture {
     var native: NativeResizeRoute?
     var nativeReady = false
     var nativeHandoff = false
+    var nativeSession = false
+    var nativeSwitchArmed = false
 
     init(button: CGMouseButton, press: CGEvent, displays: [DisplayArea], display: DisplayArea) {
         self.button = button; self.press = press; self.displays = displays; self.display = display
@@ -184,7 +186,7 @@ final class GestureController {
         let point = candidate.press.location
         let radius = Int(settings.radius), tolerance = Int(settings.tolerance), band = settings.cornerBand
         let excluded = settings.excludedApps
-        WindowAccess.queue.async { [weak self, weak candidate] in
+        WindowAccess.resolutionQueue(at: point).async { [weak self, weak candidate] in
             guard let candidate else { return }
             let target = WindowAccess.resolve(point: point, resize: candidate.button == .right, exclusions: excluded, radius: radius)
             DispatchQueue.main.async { [weak self, candidate] in
@@ -211,6 +213,7 @@ final class GestureController {
         candidate.corner = candidate.button == .right ? Corner.select(at: candidate.press.location, in: target.initial, band: band) : nil
         if settings.nativeResize, let corner = candidate.corner {
             candidate.native = NativeResizeRoute(start: target.initial, corner: corner)
+            candidate.nativeSession = true
         }
         let writer = FrameWriter(target: target)
         candidate.writer = writer
@@ -231,12 +234,12 @@ final class GestureController {
         if active.intent.committed && !active.raised {
             active.raised = true
             NSRunningApplication(processIdentifier: target.pid)?.activate(options: [])
-            WindowAccess.queue.async {
+            target.accessQueue.async {
                 _ = AXUIElementPerformAction(target.element, kAXRaiseAction as CFString)
                 DispatchQueue.main.async { active.nativeReady = true }
             }
         }
-        if active.native != nil || active.nativeHandoff { return }
+        if active.nativeSession || active.nativeHandoff { return }
         if active.button == .left || active.intent.committed {
             guard active.intent.delta != .zero || active.changedGeometry else { return }
             active.changedGeometry = true
@@ -267,6 +270,9 @@ final class GestureController {
             // restores the original rectangle through the normal writer.
             if !cancel && native.started { status("Ready"); return }
         }
+        // Release can arrive while reading the accepted frame between native
+        // segments. The old segment is already closed; don't issue an AX resize.
+        if active.nativeSession && !cancel && active.intent.committed { status("Ready"); return }
         let events = active.events
         guard let writer = active.writer else {
             if replayClick { replay(events) }
@@ -315,9 +321,15 @@ final class GestureController {
     /// Mutate the physical event in the tap, keeping the visible pointer where
     /// the user placed it. No timer, cursor warp, or per-frame AX size write.
     private func routeNativeDrag(_ active: Gesture, event: CGEvent) -> Bool {
-        guard active.intent.committed, active.nativeReady, var native = active.native else { return true }
-        if native.needsPush(delta: active.intent.delta, area: active.display.usable) {
+        guard active.intent.committed, active.nativeReady, var native = active.native,
+              let target = active.target, let corner = active.corner,
+              let plan = NativeResizeRoute.plan(start: target.initial, delta: active.intent.delta,
+                                                corner: corner, area: active.display.usable) else { return true }
+        if NativeResizeRoute.crossesOppositeEdge(start: target.initial, delta: active.intent.delta, corner: corner) {
+            // Extreme compression still needs the compatibility minimum-push
+            // solver. Display collisions never take this path.
             active.native = nil
+            active.nativeSession = false
             if native.started {
                 // Deliver the native up before issuing independent AX geometry.
                 rewriteNative(event, type: .leftMouseUp, point: native.lastPoint)
@@ -327,14 +339,49 @@ final class GestureController {
                     active.nativeHandoff = false
                     if self.gesture === active { self.update(active) }
                 }
-                Trace.write("native resize handoff to collision solver")
+                Trace.write("native resize handoff to minimum-size solver")
                 return false
             }
             update(active)
             return true
         }
+        if plan.corner != native.corner && native.started && active.nativeSwitchArmed {
+            rewriteNative(event, type: .leftMouseUp, point: native.lastPoint)
+            active.native = nil
+            active.nativeHandoff = true
+            active.nativeSwitchArmed = false
+            let reference = native.lastReference
+            // The previous event took the old active edge to the wall. End that
+            // native segment, read what the app actually accepted, then start
+            // from the opposite corner on a subsequent physical drag event.
+            DispatchQueue.main.async { [weak self, weak active] in
+                guard let self, let active, self.gesture === active else { return }
+                target.accessQueue.async { [weak self, weak active] in
+                    AXUIElementSetMessagingTimeout(target.element, 0.5)
+                    let frame = AX.frame(target.element)
+                    AXUIElementSetMessagingTimeout(target.element, 0.04)
+                    DispatchQueue.main.async { [weak self, weak active] in
+                        guard let self, let active, self.gesture === active else { return }
+                        active.nativeHandoff = false
+                        guard let frame,
+                              let latest = NativeResizeRoute.plan(start: target.initial, delta: active.intent.delta,
+                                                                  corner: corner, area: active.display.usable) else {
+                            self.swallowedButton = active.button
+                            self.gesture = nil
+                            self.status("Could not read the window after native resize")
+                            return
+                        }
+                        active.native = NativeResizeRoute.rebased(accepted: frame, reference: reference,
+                                                                  corner: latest.corner, originalCorner: corner)
+                        Trace.write("native resize corner switch app=\(target.bundleID) corner=\(latest.corner) accepted=\(frame)")
+                    }
+                }
+            }
+            return false
+        }
+        active.nativeSwitchArmed = plan.corner != native.corner && native.started
         let type: CGEventType = native.started ? .leftMouseDragged : .leftMouseDown
-        let point = native.nextPoint(delta: active.intent.delta)
+        let point = native.nextPoint(desired: plan.frame)
         active.native = native
         active.changedGeometry = true
         rewriteNative(event, type: type, point: point)

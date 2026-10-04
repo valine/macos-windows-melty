@@ -85,7 +85,7 @@ struct SettingsView: View {
                     Toggle("Left-drag solid backgrounds to move", isOn: $settings.leftMove)
                     Toggle("Right-drag anywhere to resize", isOn: $settings.rightResize)
                     Toggle("Native live resize (experimental)", isOn: $settings.nativeResize)
-                    Text("Uses macOS corner dragging to synchronize content redraws. Display-edge pushing switches to compatibility resizing for the rest of the gesture. Native app minimum sizes apply before that switch.")
+                    Text("Uses macOS corner dragging for synchronized redraws, including display-edge pushing. Apps retain their native size increments and minimum sizes. Dragging past the opposite edge uses compatibility resizing.")
                         .font(.caption).foregroundStyle(.secondary)
                     Toggle("Continue dragging at display edges", isOn: $settings.continueAtEdge)
                     Text("The press location selects the resize corner. The left and top bands use at most 30% of the window; the center resizes bottom/right. At a display edge, continued resizing grows the opposite side.")
@@ -113,7 +113,7 @@ struct SettingsView: View {
                 Spacer()
                 Button("Refresh permissions") { model.refresh() }
             }.padding(.horizontal, 24).padding(.vertical, 14)
-        }.frame(width: 590, height: 780)
+        }.frame(minWidth: 520, maxWidth: .infinity, minHeight: 440, maxHeight: .infinity)
     }
 
     private func permission(_ name: String, detail: String, granted: Bool, action: @escaping () -> Void) -> some View {
@@ -189,8 +189,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func showSettings() {
         if window == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 590, height: 780),
-                                  styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "Melty Windows"
+            window.contentMinSize = NSSize(width: 520, height: 440)
             window.contentView = NSHostingView(rootView: SettingsView(model: model))
             window.isReleasedWhenClosed = false
             window.center()

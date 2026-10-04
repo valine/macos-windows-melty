@@ -18,7 +18,7 @@ enum BackgroundSampler {
         SCScreenshotManager.captureScreenshot(rect: rect, configuration: config) { output, error in
             Trace.write("capture returned image=\(output?.sdrImage != nil) error=\(String(describing: error))")
             let image = output?.sdrImage
-            WindowAccess.queue.async {
+            target.accessQueue.async {
                 guard error == nil, let image, WindowAccess.isStillAtStart(target) else { completion(false); return }
                 let width = image.width, height = image.height, rowBytes = width * 4
                 var pixels = [UInt8](repeating: 0, count: rowBytes * height)

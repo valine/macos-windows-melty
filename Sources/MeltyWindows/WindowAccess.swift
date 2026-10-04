@@ -58,6 +58,7 @@ final class WindowTarget {
     let initial: CGRect
     let windowID: CGWindowID
     let sampleIsUnobscured: Bool
+    var accessQueue: DispatchQueue { WindowAccessQueue.forProcess(pid) }
 
     init(element: AXUIElement, pid: pid_t, name: String, bundleID: String, initial: CGRect,
          windowID: CGWindowID, sampleIsUnobscured: Bool) {
@@ -67,9 +68,23 @@ final class WindowTarget {
 }
 
 enum WindowAccess {
-    // All IPC is off the input run loop. Each message has a short timeout; the
-    // gesture controller also imposes a deadline on the entire resolution.
-    static let queue = DispatchQueue(label: "org.melty.windows.accessibility", qos: .userInteractive)
+    // External IPC stays off the input loop; self-targeted AX calls execute
+    // AppKit synchronously and must use the main queue instead.
+    static let queue = WindowAccessQueue.external
+
+    static func resolutionQueue(at point: CGPoint) -> DispatchQueue {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        // Conservatively use main anywhere inside our visible windows. Normal
+        // AX and WindowServer hit tests still reject obscured/ineligible targets.
+        let ownWindow = NSApp.windows.contains { window in
+            let frame = window.frame
+            return window.isVisible && !window.isMiniaturized
+                && CGRect(x: frame.minX, y: top - frame.maxY,
+                          width: frame.width, height: frame.height).contains(point)
+        }
+        return ownWindow ? .main : queue
+    }
 
     static func resolve(point: CGPoint, resize: Bool, exclusions: Set<String>, radius: Int) -> WindowTarget? {
         let began = Date()
@@ -80,8 +95,15 @@ enum WindowAccess {
         let hitError = AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit)
         guard hitError == .success, let hit else { Trace.write("reject AX hit error=\(hitError.rawValue)"); return nil }
         var pid: pid_t = 0
-        guard AXUIElementGetPid(hit, &pid) == .success, pid != getpid(),
+        guard AXUIElementGetPid(hit, &pid) == .success,
               let app = NSRunningApplication(processIdentifier: pid) else { Trace.write("reject hit pid=\(pid), self=\(getpid())"); return nil }
+        // A window can move between scheduling and hit-testing. Re-enter on
+        // main before reading its AppKit accessibility attributes in that case.
+        if pid == getpid(), !Thread.isMainThread {
+            return DispatchQueue.main.sync {
+                resolve(point: point, resize: resize, exclusions: exclusions, radius: radius)
+            }
+        }
         let bundle = app.bundleIdentifier ?? ""
         let name = app.localizedName ?? bundle
         guard !exclusions.contains(bundle.lowercased()), !exclusions.contains(name.lowercased()),
@@ -255,7 +277,9 @@ final class FrameWriter {
         AXUIElementSetMessagingTimeout(app, 0.04)
         let scope = ResizeAnimationScope(
             assistiveTechnologyActive: NSWorkspace.shared.isVoiceOverEnabled || NSWorkspace.shared.isSwitchControlEnabled,
-            read: { AX.value(app, "AXEnhancedUserInterface") as? Bool },
+            // Our own AppKit window does not need an external AX animation
+            // override. In particular, never wait for self-IPC during quit.
+            read: { target.pid == getpid() ? nil : AX.value(app, "AXEnhancedUserInterface") as? Bool },
             write: { enabled in
                 let result = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString,
                                                          enabled ? kCFBooleanTrue : kCFBooleanFalse)
@@ -263,17 +287,19 @@ final class FrameWriter {
                 return result == .success
             })
         animationScope = scope
-        terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
-                                                                       object: nil, queue: .main) { _ in
-            // Quit can arrive mid-gesture, before the main-loop drain callback.
-            WindowAccess.queue.sync { scope.end() }
+        if target.pid != getpid() {
+            terminationObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
+                                                                         object: nil, queue: .main) { _ in
+                // Quit can arrive mid-gesture, before the main-loop drain callback.
+                WindowAccess.queue.sync { scope.end() }
+            }
         }
     }
 
     deinit {
         if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) }
         let scope = animationScope
-        WindowAccess.queue.async { scope.end() }
+        target.accessQueue.async { scope.end() }
     }
 
     func submit(_ request: FrameRequest) {
@@ -286,7 +312,7 @@ final class FrameWriter {
         scheduled?.cancel(); scheduled = nil
         pending = nil; stopped = true
         let scope = animationScope
-        WindowAccess.queue.async { scope.end() }
+        target.accessQueue.async { scope.end() }
     }
     func finish(_ completion: @escaping () -> Void) {
         afterDrain = completion
@@ -299,7 +325,7 @@ final class FrameWriter {
         guard !busy, pending == nil, let done = afterDrain else { return }
         afterDrain = nil
         let scope = animationScope
-        WindowAccess.queue.async {
+        target.accessQueue.async {
             scope.end()
             DispatchQueue.main.async(execute: done)
         }
@@ -320,7 +346,7 @@ final class FrameWriter {
         }
         busy = true
         let target = target
-        WindowAccess.queue.async { [self] in
+        target.accessQueue.async { [self] in
             if request.corner != nil { self.animationScope.begin() }
             // Queue waiting and the initial animation-scope AX call can take
             // multiple mouse samples. Select after both, not at dispatch time.
