@@ -278,3 +278,24 @@ dimensions. Some replacement buffers were submitted about 12 ms after the size
 callback. The immediate-redraw variant is experimental and does not modify
 the installed utility or third-party apps.
 Neither a Linux compositor nor GPU parity was run or claimed on this Mac.
+
+Version 0.1.9 adds an opt-in **Native live resize (experimental)** setting to
+test the actual macOS resize path. After the existing hit test, corner selection,
+and drag threshold, the event tap translates right-button motion into left-button
+events at the selected corner. Ordinary native resizing makes no AX size writes.
+This tests the important difference seen in the probe: native edge callbacks have
+`inLiveResize = true`, while AX setters leave it false even with correct sizes.
+The event-redirection approach is also used by AnyDrag's current ResizeStrategy:
+https://github.com/XueshiQiao/AnyDrag/blob/main/AnyDrag/Sources/ResizeStrategy.swift
+Our route and gesture integration are implemented independently.
+
+The experiment is not a confirmed jelly fix. At display overflow (or crossing the
+opposite edge), it ends the native drag and hands the remainder of that gesture
+to the original collision solver, using the original press geometry and total
+delta. This preserves display-edge pushing but may reintroduce stretching there.
+Before handoff, native minimum-size behavior applies, rather than our minimum-size
+push behavior. Escape closes the native drag and restores through the AX writer.
+The toggle defaults off; turning it off restores the existing resize behavior.
+Four geometry tests cover event anchoring, reversal, collision handoff on all
+edges, and negative-origin displays. Physical right-drag visual validation is
+required; unit tests cannot establish WindowServer presentation behavior.

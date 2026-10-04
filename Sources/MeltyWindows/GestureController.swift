@@ -16,6 +16,9 @@ private final class Gesture {
     var corner: Corner?
     var raised = false
     var changedGeometry = false
+    var native: NativeResizeRoute?
+    var nativeReady = false
+    var nativeHandoff = false
 
     init(button: CGMouseButton, press: CGEvent, displays: [DisplayArea], display: DisplayArea) {
         self.button = button; self.press = press; self.displays = displays; self.display = display
@@ -122,9 +125,18 @@ final class GestureController {
                     active.intent.update(active.pointer.position)
                 } else { active.intent.update(event.location) }
                 update(active)
+                if active.native != nil { return routeNativeDrag(active, event: event) }
                 return true
             }
             if type == upType(active.button) {
+                if let native = active.native, native.started {
+                    rewriteNative(event, type: .leftMouseUp, point: native.lastPoint)
+                    active.native = nil
+                    gesture = nil
+                    status("Ready")
+                    Trace.write("native resize ended app=\(active.target?.bundleID ?? "")")
+                    return false
+                }
                 if let copy = event.copy() { active.events.append(copy) }
                 if active.writer == nil { failOpen(active) }
                 else { finish(active, cancel: !active.intent.committed, replayClick: !active.intent.committed) }
@@ -197,6 +209,9 @@ final class GestureController {
         Trace.write("gesture accepted \(candidate.button)")
         candidate.target = target
         candidate.corner = candidate.button == .right ? Corner.select(at: candidate.press.location, in: target.initial, band: band) : nil
+        if settings.nativeResize, let corner = candidate.corner {
+            candidate.native = NativeResizeRoute(start: target.initial, corner: corner)
+        }
         let writer = FrameWriter(target: target)
         candidate.writer = writer
         writer.onFailure = { [weak self, weak candidate] message in
@@ -216,8 +231,12 @@ final class GestureController {
         if active.intent.committed && !active.raised {
             active.raised = true
             NSRunningApplication(processIdentifier: target.pid)?.activate(options: [])
-            WindowAccess.queue.async { _ = AXUIElementPerformAction(target.element, kAXRaiseAction as CFString) }
+            WindowAccess.queue.async {
+                _ = AXUIElementPerformAction(target.element, kAXRaiseAction as CFString)
+                DispatchQueue.main.async { active.nativeReady = true }
+            }
         }
+        if active.native != nil || active.nativeHandoff { return }
         if active.button == .left || active.intent.committed {
             guard active.intent.delta != .zero || active.changedGeometry else { return }
             active.changedGeometry = true
@@ -235,6 +254,19 @@ final class GestureController {
     private func finish(_ active: Gesture, cancel: Bool, replayClick: Bool) {
         guard gesture === active else { return }
         gesture = nil
+        if let native = active.native {
+            if native.started {
+                if let release = active.press.copy() {
+                    rewriteNative(release, type: .leftMouseUp, point: native.lastPoint)
+                    replay([release])
+                }
+                active.changedGeometry = true
+            }
+            active.native = nil
+            // Ending a native drag needs no final AX size write. Escape still
+            // restores the original rectangle through the normal writer.
+            if !cancel && native.started { status("Ready"); return }
+        }
         let events = active.events
         guard let writer = active.writer else {
             if replayClick { replay(events) }
@@ -270,6 +302,44 @@ final class GestureController {
             copy.setIntegerValueField(.eventSourceUserData, value: Self.replayTag)
             copy.post(tap: .cgSessionEventTap)
         }
+    }
+
+    private func rewriteNative(_ event: CGEvent, type: CGEventType, point: CGPoint) {
+        event.type = type
+        event.location = point
+        event.flags.subtract([.maskControl, .maskAlternate, .maskShift, .maskCommand])
+        event.setIntegerValueField(.mouseEventButtonNumber, value: 0)
+        event.setIntegerValueField(.mouseEventClickState, value: 1)
+    }
+
+    /// Mutate the physical event in the tap, keeping the visible pointer where
+    /// the user placed it. No timer, cursor warp, or per-frame AX size write.
+    private func routeNativeDrag(_ active: Gesture, event: CGEvent) -> Bool {
+        guard active.intent.committed, active.nativeReady, var native = active.native else { return true }
+        if native.needsPush(delta: active.intent.delta, area: active.display.usable) {
+            active.native = nil
+            if native.started {
+                // Deliver the native up before issuing independent AX geometry.
+                rewriteNative(event, type: .leftMouseUp, point: native.lastPoint)
+                active.nativeHandoff = true
+                DispatchQueue.main.async { [weak self, weak active] in
+                    guard let self, let active else { return }
+                    active.nativeHandoff = false
+                    if self.gesture === active { self.update(active) }
+                }
+                Trace.write("native resize handoff to collision solver")
+                return false
+            }
+            update(active)
+            return true
+        }
+        let type: CGEventType = native.started ? .leftMouseDragged : .leftMouseDown
+        let point = native.nextPoint(delta: active.intent.delta)
+        active.native = native
+        active.changedGeometry = true
+        rewriteNative(event, type: type, point: point)
+        if type == .leftMouseDown { Trace.write("native resize began app=\(active.target?.bundleID ?? "") corner=\(native.corner)") }
+        return false
     }
     private func upType(_ button: CGMouseButton) -> CGEventType { button == .left ? .leftMouseUp : .rightMouseUp }
     private func dragType(_ button: CGMouseButton) -> CGEventType { button == .left ? .leftMouseDragged : .rightMouseDragged }

@@ -6,6 +6,7 @@ final class Settings: ObservableObject {
     @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: "enabled") } }
     @Published var leftMove: Bool { didSet { defaults.set(leftMove, forKey: "leftMove") } }
     @Published var rightResize: Bool { didSet { defaults.set(rightResize, forKey: "rightResize") } }
+    @Published var nativeResize: Bool { didSet { defaults.set(nativeResize, forKey: "nativeResize") } }
     @Published var radius: Double { didSet { defaults.set(radius, forKey: "radius") } }
     @Published var tolerance: Double { didSet { defaults.set(tolerance, forKey: "tolerance") } }
     @Published var cornerBand: Double { didSet { defaults.set(cornerBand, forKey: "cornerBand") } }
@@ -20,6 +21,7 @@ final class Settings: ObservableObject {
         enabled = defaults.bool(forKey: "enabled")
         leftMove = defaults.bool(forKey: "leftMove")
         rightResize = defaults.bool(forKey: "rightResize")
+        nativeResize = defaults.bool(forKey: "nativeResize")
         radius = defaults.double(forKey: "radius")
         tolerance = defaults.double(forKey: "tolerance")
         cornerBand = defaults.double(forKey: "cornerBand")
