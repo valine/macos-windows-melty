@@ -9,7 +9,7 @@ from meltygui import imgui, window_api as glfw
 from meltygui.core.melty import Melty
 from meltygui.core.runtime import app
 from meltygui.core.windowing.surface import Surface
-from meltygui.core.windowing import titlebar
+from meltygui.core.windowing import titlebar, melty_windows
 
 output = Path(sys.argv[1])
 modal_only = '--modal-only' in sys.argv
@@ -19,6 +19,18 @@ last_size = [1400, 900]
 samples = []
 original_frame = Surface.frame
 original_refresh = app.refresh_surface
+original_begin = melty_windows.begin_frame
+native_groups = 0
+
+
+def begin_frame(window):
+    global native_groups
+    frame = original_begin(window)
+    native_groups += frame is not None
+    return frame
+
+
+melty_windows.begin_frame = begin_frame
 objc = ctypes.CDLL('/usr/lib/libobjc.A.dylib')
 selector = objc.sel_registerName
 selector.argtypes, selector.restype = [ctypes.c_char_p], ctypes.c_void_p
@@ -33,8 +45,10 @@ def refresh(surface):
 
 def frame(surface):
     began = time.perf_counter()
+    groups_before = native_groups
     original_frame(surface)
     samples.append({'ms': (time.perf_counter()-began)*1000,
+                    'native_group': native_groups > groups_before,
                     'callback': app._state.get('refreshing', False)})
     if len(samples) >= 180:
         output.write_text(json.dumps(samples))

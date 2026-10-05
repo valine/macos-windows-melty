@@ -63,8 +63,18 @@ native frame insets from the display workarea, including titlebar height.
 The app's existing edge solver produces requested content size and origin
 changes. Apply both on the render thread before drawing, reconcile actual
 native observations, and keep position/size compensation in the existing
-surface lifecycle. Geometry never crosses this socket. macOS setters are
-separate operations; this is not an atomic compositor transaction.
+surface lifecycle. Geometry never crosses this socket.
+
+Version 0.2.1 optionally advertises `frame_api:1` and `frame_library`, the
+absolute path to its signed `Contents/Frameworks/MeltySurfaceFrame.dylib`.
+The adapter loads this helper in the cooperative app. `MeltySurfaceFrameBegin`
+opens a zero-duration NSAnimationContext group on the main thread;
+`MeltySurfaceFrameSet` applies content size and top-left displacement in one
+native frame change with `display:NO`; `MeltySurfaceFrameEnd` closes the group
+after the surface's GL buffer swap, including cleanup on render failure.
+Native modal border resizing keeps its existing AppKit path. Older services
+without the helper retain the GLFW setters. This groups geometry and buffer
+submission; visual compositor synchronization still requires live acceptance.
 
 The reference adapter is `meltygui/core/windowing/melty_windows.py`, wired
 through `titlebar`, `os_frame`, and `window_api`. Client applications need no
@@ -112,3 +122,10 @@ reversal restored the original 800-point span and screen origin. The check
 queues local layout drag samples rather than synthesizing global mouse events.
 Run it with a MeltyGUI Python interpreter, axis `x` or `y`, and an output JSON
 path; use separate XDG state/cache/config and MELTY_FILE_META paths for the probe.
+
+The signed 0.2.1 helper passed native combined-size/position, reversal and
+transaction cleanup checks. Both rendered collision axes still passed. The
+large-step resize benchmark confirmed helper use in all 161 measured frames,
+averaging 10.4 ms (95th percentile 16.1 ms), with no recursive refresh frames.
+These checks establish geometry and latency, not absence of visible stretching.
+Re-run the native helper checks with `zsh Diagnostics/test-surface-frame.sh`.

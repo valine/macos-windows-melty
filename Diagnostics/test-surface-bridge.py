@@ -11,17 +11,18 @@ from meltygui.core.windowing import window_api as glfw, melty_windows as bridge,
 
 with tempfile.TemporaryDirectory(prefix='melty-bridge-', dir='/tmp') as directory:
     bridge.PATH = directory + '/surfaces.sock'
-    process = subprocess.Popen([os.path.abspath(sys.argv[1]), bridge.PATH],
-                               stdout=subprocess.PIPE, text=True, close_fds=False)
-    assert process.stdout.readline().strip() == 'ready'
     assert glfw.init()
     glfw.window_hint(glfw.CLIENT_API, glfw.NO_API)
     glfw.window_hint(glfw.FOCUSED, False)
     window = glfw.create_window(480, 320, 'Melty surface bridge test', None, None)
+    # Start the timed pause after Cocoa's potentially slow initialization.
+    process = subprocess.Popen([os.path.abspath(sys.argv[1]), bridge.PATH],
+                               stdout=subprocess.PIPE, text=True, close_fds=False)
+    assert process.stdout.readline().strip() == 'ready'
     try:
         number = bridge._window_number(window)
         assert number > 0
-        assert bridge._exchange({number})
+        assert bridge._exchange({number})[0]
         assert not bridge.available(window)  # Discovery is asynchronous.
         deadline = time.monotonic() + 1
         while not bridge.available(window) and time.monotonic() < deadline:

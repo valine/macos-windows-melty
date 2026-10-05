@@ -7,7 +7,11 @@ cd "$project_dir"
 swift build -c release
 binary_dir="$(swift build -c release --show-bin-path)"
 app_dir="$project_dir/dist/Melty Windows.app"
-mkdir -p "$app_dir/Contents/MacOS"
+mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Frameworks"
+xcrun clang -fobjc-arc -dynamiclib -fvisibility=hidden -framework AppKit \
+    -mmacosx-version-min=26.0 "$project_dir/Native/MeltySurfaceFrame.m" \
+    -Wl,-install_name,@rpath/MeltySurfaceFrame.dylib \
+    -o "$app_dir/Contents/Frameworks/MeltySurfaceFrame.dylib"
 cp "$binary_dir/MeltyWindows" "$app_dir/Contents/MacOS/MeltyWindows"
 cat > "$app_dir/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -18,8 +22,8 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>org.melty.windows</string>
 <key>CFBundleExecutable</key><string>MeltyWindows</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
-<key>CFBundleVersion</key><string>16</string>
+<key>CFBundleShortVersionString</key><string>0.2.1</string>
+<key>CFBundleVersion</key><string>17</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

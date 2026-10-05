@@ -109,8 +109,18 @@ final class SurfaceBridge {
         let active = enabled && (alreadyOwned || !buttonDown)
         if active { claims.replace(pid: pid, windows: request.windows, now: now) }
         lock.unlock()
-        let reply = "{\"version\":1,\"capability\":\"native-edges\",\"enabled\":\(active),\"lease_seconds\":1}\n"
-        reply.withCString { pointer in _ = write(fd, pointer, strlen(pointer)) }
+        var response: [String: Any] = ["version": 1, "capability": "native-edges", "enabled": active, "lease_seconds": 1]
+        if let library = Bundle.main.privateFrameworksURL?.appendingPathComponent("MeltySurfaceFrame.dylib"),
+           FileManager.default.fileExists(atPath: library.path) {
+            response["frame_api"] = 1
+            response["frame_library"] = library.path
+        }
+        guard var reply = try? JSONSerialization.data(withJSONObject: response) else { return }
+        reply.append(10)
+        reply.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress else { return }
+            _ = write(fd, base, bytes.count)
+        }
     }
 
     private struct Request: Decodable {
