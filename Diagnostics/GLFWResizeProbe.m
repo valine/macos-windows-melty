@@ -58,10 +58,7 @@ static void draw(GLFWwindow *w) {
         glVertex2i(fw/2+100,fh/2+100); glVertex2i(fw/2-100,fh/2+100);
         glEnd();
         if(fw!=lastWidth || fh!=lastHeight) trace(w,"before-swap",fw,fh);
-        BOOL resized = fw!=lastWidth || fh!=lastHeight;
-        if(resized) glfwSwapInterval(0);
         glfwSwapBuffers(w);
-        if(resized) glfwSwapInterval(1);
         if(fw!=lastWidth || fh!=lastHeight) trace(w,"after-swap",fw,fh);
         lastWidth=fw; lastHeight=fh;
     }
@@ -69,7 +66,6 @@ static void draw(GLFWwindow *w) {
 }
 static void sizeChanged(GLFWwindow *w,int width,int height) {
     trace(w,"window-size",width,height);
-    draw(w);
 }
 static void framebufferChanged(GLFWwindow *w,int width,int height) { trace(w,"framebuffer-size",width,height); }
 static void refreshed(GLFWwindow *w) { trace(w,"refresh",0,0); draw(w); }
@@ -79,7 +75,7 @@ int main(void) {
         NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs/Melty GLFW Resize Probe.log"];
         logFile=fopen(path.fileSystemRepresentation,"w");
         if(!logFile || !glfwInit()) return 1;
-        GLFWwindow *w=glfwCreateWindow(800,540,"GLFW Resize Probe — immediate redraw experiment",NULL,NULL);
+        GLFWwindow *w=glfwCreateWindow(800,540,"GLFW Resize Probe",NULL,NULL);
         if(!w) return 2;
         glfwMakeContextCurrent(w); glfwSwapInterval(1);
         glfwSetWindowSizeCallback(w,sizeChanged);

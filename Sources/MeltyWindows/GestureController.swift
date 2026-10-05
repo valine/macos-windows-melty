@@ -19,6 +19,7 @@ private final class Gesture {
     var native: NativeResizeRoute?
     var nativeReady = false
     var nativeHandoff = false
+    var collisionInNativeSession = false
 
     init(button: CGMouseButton, press: CGEvent, displays: [DisplayArea], display: DisplayArea) {
         self.button = button; self.press = press; self.displays = displays; self.display = display
@@ -37,6 +38,7 @@ final class GestureController {
     private var gesture: Gesture?
     private var swallowedButton: CGMouseButton?
     private var deferredReplay: [CGEvent]?
+    private var drainingNativeRelease: CGEvent?
     private let settings = Settings.shared
     private static let replayTag: Int64 = 0x4D454C545957
     var status: (String) -> Void = { _ in }
@@ -69,7 +71,14 @@ final class GestureController {
     }
 
     func stop() {
-        if let gesture { finish(gesture, cancel: true, replayClick: !gesture.intent.committed) }
+        if let release = drainingNativeRelease {
+            replay([release])
+            drainingNativeRelease = nil
+        }
+        if let gesture {
+            releaseNative(gesture)
+            finish(gesture, cancel: true, replayClick: !gesture.intent.committed)
+        }
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         tap = nil; source = nil
@@ -129,6 +138,10 @@ final class GestureController {
                 return true
             }
             if type == upType(active.button) {
+                if active.collisionInNativeSession {
+                    finish(active, cancel: false, replayClick: false)
+                    return true
+                }
                 if let native = active.native, native.started {
                     rewriteNative(event, type: .leftMouseUp, point: native.lastPoint)
                     active.native = nil
@@ -218,6 +231,7 @@ final class GestureController {
             guard let self, let candidate else { return }
             self.status(message)
             if self.gesture === candidate {
+                self.releaseNative(candidate)
                 self.gesture = nil
                 if candidate.intent.committed { self.swallowedButton = candidate.button }
                 else { self.replay(candidate.events) }
@@ -236,7 +250,7 @@ final class GestureController {
                 DispatchQueue.main.async { active.nativeReady = true }
             }
         }
-        if active.native != nil || active.nativeHandoff { return }
+        if (active.native != nil && !active.collisionInNativeSession) || active.nativeHandoff { return }
         if active.button == .left || active.intent.committed {
             guard active.intent.delta != .zero || active.changedGeometry else { return }
             active.changedGeometry = true
@@ -254,18 +268,17 @@ final class GestureController {
     private func finish(_ active: Gesture, cancel: Bool, replayClick: Bool) {
         guard gesture === active else { return }
         gesture = nil
+        var releaseAfterDrain: CGEvent?
         if let native = active.native {
             if native.started {
-                if let release = active.press.copy() {
-                    rewriteNative(release, type: .leftMouseUp, point: native.lastPoint)
-                    replay([release])
-                }
+                let release = active.press.copy()
+                if let release { rewriteNative(release, type: .leftMouseUp, point: native.lastPoint) }
+                if active.collisionInNativeSession { releaseAfterDrain = release }
+                else if let release { replay([release]) }
                 active.changedGeometry = true
             }
             active.native = nil
-            // Ending a native drag needs no final AX size write. Escape still
-            // restores the original rectangle through the normal writer.
-            if !cancel && native.started { status("Ready"); return }
+            if !cancel && native.started && !active.collisionInNativeSession { status("Ready"); return }
         }
         let events = active.events
         guard let writer = active.writer else {
@@ -280,6 +293,10 @@ final class GestureController {
             writer.submit(FrameRequest(start: active.target!.initial, delta: .zero, corner: nil,
                                        area: active.display.usable, restoring: true))
         } else { writer.submit(active.request) }
+        if let releaseAfterDrain {
+            drainingNativeRelease = releaseAfterDrain
+            deferredReplay = []
+        }
         if replayClick {
             deferredReplay = events.filter { $0.type != .leftMouseDragged && $0.type != .rightMouseDragged }
         }
@@ -287,7 +304,12 @@ final class GestureController {
         // tentative move is restored before delivering its ordinary click.
         writer.finish { [self, writer] in
             _ = writer
-            if replayClick {
+            if releaseAfterDrain != nil, let release = drainingNativeRelease {
+                replay([release])
+                drainingNativeRelease = nil
+                Trace.write("original native session ended after collision drain")
+            }
+            if replayClick || releaseAfterDrain != nil {
                 let clicks = deferredReplay ?? []
                 deferredReplay = nil
                 replay(clicks)
@@ -316,21 +338,13 @@ final class GestureController {
     /// the user placed it. No timer, cursor warp, or per-frame AX size write.
     private func routeNativeDrag(_ active: Gesture, event: CGEvent) -> Bool {
         guard active.intent.committed, active.nativeReady, var native = active.native else { return true }
-        if native.needsPush(delta: active.intent.delta, area: active.display.usable) {
-            active.native = nil
-            if native.started {
-                // Deliver the native up before issuing independent AX geometry.
-                rewriteNative(event, type: .leftMouseUp, point: native.lastPoint)
-                active.nativeHandoff = true
-                DispatchQueue.main.async { [weak self, weak active] in
-                    guard let self, let active else { return }
-                    active.nativeHandoff = false
-                    if self.gesture === active { self.update(active) }
-                }
-                Trace.write("native resize handoff to collision solver")
-                return false
-            }
-            update(active)
+        if active.collisionInNativeSession { return true }
+        // Start exactly one native session at the original corner, even when
+        // the first committed sample is already beyond a display boundary.
+        if native.started && native.needsPush(delta: active.intent.delta, area: active.display.usable) {
+            active.collisionInNativeSession = true
+            active.writer?.submit(active.request)
+            Trace.write("collision continues original native session window=\(active.target?.windowID ?? 0)")
             return true
         }
         let type: CGEventType = native.started ? .leftMouseDragged : .leftMouseDown
@@ -340,6 +354,15 @@ final class GestureController {
         rewriteNative(event, type: type, point: point)
         if type == .leftMouseDown { Trace.write("native resize began app=\(active.target?.bundleID ?? "") corner=\(native.corner)") }
         return false
+    }
+    private func releaseNative(_ active: Gesture) {
+        guard let native = active.native, native.started else { return }
+        if let release = active.press.copy() {
+            rewriteNative(release, type: .leftMouseUp, point: native.lastPoint)
+            replay([release])
+        }
+        active.native = nil
+        active.collisionInNativeSession = false
     }
     private func upType(_ button: CGMouseButton) -> CGEventType { button == .left ? .leftMouseUp : .rightMouseUp }
     private func dragType(_ button: CGMouseButton) -> CGEventType { button == .left ? .leftMouseDragged : .rightMouseDragged }

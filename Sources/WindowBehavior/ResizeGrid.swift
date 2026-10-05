@@ -21,7 +21,12 @@ public struct ResizeGrid {
             let candidate = zip(values, values.dropFirst()).reduce(0) { gcd($0, $1.1 - $1.0) }
             guard candidate > 1 else { return }
             let spacing = Double(candidate), offset = Double(values[0] % candidate)
+            let error = samples.map { abs($0.request - $0.accepted) }.max() ?? 0
             for mode in [FloatingPointRoundingRule.toNearestOrAwayFromZero, .down, .up] {
+                // Sparse fast motion can skip several cells. Do not mistake a
+                // multiple of the real increment for the app's actual grid.
+                let coveredSpacing = mode == .toNearestOrAwayFromZero ? 2 * error + 1 : error + 1
+                guard spacing <= coveredSpacing else { continue }
                 if samples.allSatisfy({ abs((($0.request - offset) / spacing).rounded(mode) * spacing + offset - $0.accepted) < 0.5 }) {
                     step = spacing; phase = offset; rule = mode
                     return

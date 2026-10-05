@@ -319,19 +319,23 @@ execute queued work and verify main-thread affinity for self and worker affinity
 for external targets. All 47 tests pass. Physical gesture retesting remains
 necessary because UI automation does not exercise our global right-drag tap.
 
-Version 0.1.12 keeps display collisions on the native event path. First it takes
-the active edge to the wall, closes that native segment, reads the accepted
-frame, and starts a segment at the opposite corner. Each axis switches
-independently and switches back on reversal. No AX size or position correction
-is issued for ordinary native resizing or display-edge pushing. An ideal
-geometry reference is kept separately from the app's accepted frame, so grid
-rounding does not become a fake minimum/maximum or a corrective window move.
-Returning to the original corner removes the wall's grid remainder to avoid
-accumulating a row/column of drift over repeated cycles.
+The 0.1.12 corner-switching experiment was rejected and rolled back after live
+reports of target leakage and incorrect sizes. The proposed 0.1.13 routing change
+was never deployed. Neither is in the current source. Rejected source is retained
+in /tmp/melty-windows-rejected-source for diagnosis, not as a build input.
 
-The compatibility path remains available with native resize disabled and for
-extreme compression past the original opposite edge. Native minimum sizes still
-apply during native segments. Model tests simulate discrete 10 × 20 pt sizing
-on all corners through repeated wall push/reversal cycles, with no drift or
-movement on stationary samples. All 48 tests pass; live visual validation of the
-new corner transitions is still required.
+Version 0.1.14 tests a narrower change: a single native mouse-down at the original
+corner remains held while the existing collision solver writes geometry. Native
+mouse-up is deferred until the last write drains. No corner switching, additional
+mouse-down, new hit test, or routing-metadata overrides occur during the gesture.
+Failure and shutdown release the native button. A bounded size-grid learner
+requires several distinct accepted sizes and a consistent rounding rule before
+quantizing subsequent requests; one minimum/maximum plateau is not a grid.
+Sparse fast-motion samples cannot establish an increment larger than their
+observed rounding range. Grid-aligned requests avoid repeatedly moving the
+window between cells at a wall. Existing minimum/maximum push tests still pass.
+
+All 51 tests passed and the signed build launches with existing permissions.
+The GLFW probe is back to its baseline redraw behavior, so its inLiveResize trace
+can test the lifetime change without an app-side redraw workaround. Live
+collision behavior and the visual result are not yet verified.
