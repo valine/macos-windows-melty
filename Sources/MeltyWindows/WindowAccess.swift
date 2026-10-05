@@ -144,6 +144,7 @@ enum WindowAccess {
             Trace.write("reject no matching normal CG window AX=\(frame)")
             return nil
         }
+        guard !SurfaceBridge.shared.owns(pid: pid, window: match.id) else { return nil }
         Trace.write("accept target window=\(match.id) unobscured=\(match.unobscured)")
         return WindowTarget(element: window, pid: pid, name: name, bundleID: bundle, initial: frame,
                             windowID: match.id, sampleIsUnobscured: match.unobscured)

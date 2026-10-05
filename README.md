@@ -105,7 +105,8 @@ columns, rows, nested Melty windows, native containment, and minimum/maximum
 cascades operate on an internal layout graph. A system-wide utility cannot
 recover that graph or apply those internal behaviors to every macOS app.
 Melty Code Editor is excluded by default so its own layout gestures retain ownership.
-App-specific integrations could later expose internal splitters/constraints.
+The automatic surface integration below now enables the existing MeltyGUI layout
+solver to adjust native edges on macOS without exposing its layout graph.
 
 The copied Hyprland repository contains the tracked compositor **patch**, not
 the original out-of-tree full source/build. The relevant code is in
@@ -122,6 +123,38 @@ the original out-of-tree full source/build. The relevant code is in
 The comments describing “nearest corner” and “small windows split at center” are
 less precise than the actual 30% implementation. The late `config/settings.lua`
 overrides also matter; copying only defaults would produce different background detection.
+
+## MeltyGUI integration (0.2.0)
+
+Apps using the updated sibling `meltygui` library discover Melty Windows
+through its shared windowing layer. No app registration code or bundle-ID
+exclusion is needed. Run the updated utility with Accessibility granted and
+Enabled on. Existing apps need the updated library loaded; packaged apps must
+include that version of MeltyGUI. Older library builds cannot discover this interface.
+
+MeltyGUI owns column/row gestures, min/max propagation, native containment,
+and sticky reversal. Melty Windows yields input for each registered native
+surface, so an inner right-drag does not turn into an outer corner resize.
+The app applies native geometry before its next render pass, using its own GLFW
+window rather than Accessibility IPC. Ordinary apps retain the existing behavior.
+The native title bar remains native; its size is reserved at display boundaries.
+Coordinates are logical points, not Retina framebuffer pixels.
+
+Pause, loss of the utility, or an expired agreement returns the app to its
+existing fixed-bounds fallback and discards pending collision compensation.
+Automatic discovery/reconnection runs off the render thread. Maximized,
+fullscreen, and nonresizable windows do not enable native edge adjustment.
+No collision between separate OS windows is introduced.
+
+The versioned [surface interface](docs/SURFACE_INTERFACE.md) is deliberately
+small: a process claims its own native surfaces; the service acknowledges gesture
+ownership. Geometry, constraints, and the layout graph remain app-owned.
+
+Validation: Swift ownership/expiry tests; MeltyGUI adapter and existing layout
+regressions; a native GLFW/Swift socket probe for discovery, actual geometry,
+invalid-window rejection and pause fallback. These do not establish visual
+Hyprland parity, physical gesture routing under every app, or mixed-display
+behavior; those remain live acceptance checks.
 
 ## macOS architecture and limits
 

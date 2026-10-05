@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.sessionActive = false
             self?.gestures.stop()
+            SurfaceBridge.shared.setEnabled(false)
         }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.sessionActive = true
@@ -40,6 +41,7 @@ final class AppModel: ObservableObject {
             if gestures.running { gestures.stop() }
             status = Settings.shared.enabled ? "Waiting for Accessibility permission" : "Paused"
         }
+        SurfaceBridge.shared.setEnabled(gestures.running && Settings.shared.enabled && sessionActive)
     }
     func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -91,6 +93,10 @@ struct SettingsView: View {
                     Text("The press location selects the resize corner. The left and top bands use at most 30% of the window; the center resizes bottom/right. At a display edge, continued resizing grows the opposite side.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Hold Option before pressing to use an app's own drag. Press Escape during a window gesture to cancel it. Short clicks still reach the app.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("MeltyGUI apps") {
+                    Text("Compatible apps connect automatically and keep control of their columns, rows, and window gestures. Their layout can push native window edges to the display boundary while Melty Windows is enabled.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Hyprland settings") {

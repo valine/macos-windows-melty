@@ -176,6 +176,11 @@ final class GestureController {
               !CGEventSource.buttonState(.combinedSessionState, button: button == .left ? .right : .left),
               !CGEventSource.buttonState(.combinedSessionState, button: .center),
               let press = event.copy() else { return false }
+        // WindowServer supplies the hit window number. Registered surfaces get
+        // the original press immediately, without buffering/replaying inner drags.
+        let hitWindow = event.getIntegerValueField(.mouseEventWindowUnderMousePointer)
+        if hitWindow > 0 && hitWindow <= Int64(UInt32.max),
+           SurfaceBridge.shared.owns(window: UInt32(hitWindow)) { return false }
         if button == .left, let cursor = NSCursor.currentSystem,
            (cursor.hotSpot.x > 8 || cursor.hotSpot.y > 8) { return false }
         let displays = DisplayArea.all()
