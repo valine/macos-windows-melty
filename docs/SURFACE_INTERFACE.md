@@ -129,3 +129,37 @@ large-step resize benchmark confirmed helper use in all 161 measured frames,
 averaging 10.4 ms (95th percentile 16.1 ms), with no recursive refresh frames.
 These checks establish geometry and latency, not absence of visible stretching.
 Re-run the native helper checks with `zsh Diagnostics/test-surface-frame.sh`.
+
+The Cocoa adapter also supplies the applied window origin to MeltyGUI's
+existing drag compensation. A window moving under the cursor must not count
+as hand movement. `Diagnostics/native-drag-motion.py` checks real helper-driven
+native movement against stationary and independently moving drag samples,
+without sending desktop mouse events. `Diagnostics/native-fractional-collision.py`
+checks rendered column/row shrinking, holding and reversal at fractional steps.
+These exposed two shared reconciliation errors: the pinned body truncated a
+size that the native request rounded, and a rounded acknowledgement could be
+replayed as an external native-edge drag. Both have regressions on simulated
+feed and Cocoa backends; the underlying collision rules are unchanged.
+
+Rapid release/regrab is tracked by input press identity, including when no
+rendered frame observes the released state. Cocoa pointer compensation,
+divider totals, native/layout replay snapshots and diagnostic history must
+start from the new press. A queued old release must not clear a newer press's
+coordinates. The native drag probe also covers this between-frame regrab.
+
+Cocoa requests quantize the two screen edges together, deriving the native
+span and displacement from that rectangle. Independently rounding a span and
+a displacement (especially half-point ties) made a fixed screen edge wobble
+by one point. Acknowledgements reconcile the origin as well as the span,
+without feeding this rounding back into the collision solver as a new drag.
+`Diagnostics/native-boundary-resize.py` exercises both axes through fractional
+growth at a display wall, stationary holds and reversal; 37 native samples
+per axis kept the fixed edge exactly on the wall.
+
+App-owned Cocoa resizes have no post-release settling timeout. Native border
+resize bursts retain their existing settling policy, owned separately by each
+surface. Cached resize replay must deliver presses and releases immediately,
+as well as active drag events, so a new gesture can start while another tile
+is settling. This does not change double-right corner selection or collision
+constraints. Native geometry checks do not prove that all presentation jitter
+is gone; the larger pending-frame row-position reports need live verification.
