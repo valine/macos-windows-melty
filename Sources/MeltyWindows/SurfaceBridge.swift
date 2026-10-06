@@ -10,6 +10,7 @@ final class SurfaceBridge {
     private let lock = NSLock()
     private var claims = SurfaceClaims()
     private var enabled = false
+    private var leftMove = false
     private var source: DispatchSourceRead?
     private let path: String
 
@@ -22,8 +23,8 @@ final class SurfaceBridge {
         return claims.owns(window: window, now: ProcessInfo.processInfo.systemUptime)
     }
 
-    func setEnabled(_ value: Bool) {
-        lock.lock(); enabled = value; lock.unlock()
+    func setEnabled(_ value: Bool, leftMove: Bool = true) {
+        lock.lock(); enabled = value; self.leftMove = leftMove; lock.unlock()
         if source == nil { start() }
     }
 
@@ -107,13 +108,19 @@ final class SurfaceBridge {
         // New ownership starts between gestures. Never enable a layout solver
         // halfway through an outer-window drag that the utility already owns.
         let active = enabled && (alreadyOwned || !buttonDown)
+        let moveEnabled = active && leftMove
         if active { claims.replace(pid: pid, windows: request.windows, now: now) }
         lock.unlock()
         var response: [String: Any] = ["version": 1, "capability": "native-edges", "enabled": active, "lease_seconds": 1]
-        if let library = Bundle.main.privateFrameworksURL?.appendingPathComponent("MeltySurfaceFrame.dylib"),
+        // A fresh path lets clients load this build without reopening their
+        // windows. Already-open frame tokens retain their original helper.
+        if let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+           let library = Bundle.main.privateFrameworksURL?.appendingPathComponent("SurfaceFrame-\(build)/MeltySurfaceFrame.dylib"),
            FileManager.default.fileExists(atPath: library.path) {
             response["frame_api"] = 1
             response["frame_library"] = library.path
+            response["move_api"] = 1
+            response["move_enabled"] = moveEnabled
         }
         guard var reply = try? JSONSerialization.data(withJSONObject: response) else { return }
         reply.append(10)

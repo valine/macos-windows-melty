@@ -12,16 +12,19 @@ int main(void) { @autoreleasepool {
     void *token = MeltySurfaceFrameBegin((__bridge void *)window);
 
     if (!token) return 1;
+    assert(window.contentView.layerContentsPlacement == NSViewLayerContentsPlacementTopLeft);
     assert(NSAnimationContext.currentContext.duration == 0);
     assert(!NSAnimationContext.currentContext.allowsImplicitAnimation);
     assert(!MeltySurfaceFrameSet(token, -1, 200, 0, 0));
     assert(MeltySurfaceFrameSet(token, 900, 700, -100, -100));
+    assert(window.contentView.layerContentsPlacement == NSViewLayerContentsPlacementTopLeft);
     NSRect grown = [window contentRectForFrameRect:window.frame];
     assert(grown.origin.x == initial.origin.x-100 && NSMaxY(grown) == NSMaxY(initial)+100);
     assert(grown.size.width == 900 && grown.size.height == 700);
     assert(MeltySurfaceFrameSet(token, 800, 600, 100, 100));
     assert(NSEqualRects([window contentRectForFrameRect:window.frame], initial));
     MeltySurfaceFrameEnd(token);
+    assert(window.contentView.layerContentsPlacement == NSViewLayerContentsPlacementTopLeft);
     assert(fabs(NSAnimationContext.currentContext.duration - 0.73) < 1e-6);
     MeltySurfaceFrameEnd(NULL);
     puts("PASS: native combined geometry, reversal, invalid-size refusal, balanced zero-duration transaction");

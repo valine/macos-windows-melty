@@ -66,7 +66,10 @@ native observations, and keep position/size compensation in the existing
 surface lifecycle. Geometry never crosses this socket.
 
 Version 0.2.1 optionally advertises `frame_api:1` and `frame_library`, the
-absolute path to its signed `Contents/Frameworks/MeltySurfaceFrame.dylib`.
+absolute path to its signed `MeltySurfaceFrame.dylib`. Since 0.2.2 it lives in
+`Contents/Frameworks/SurfaceFrame-<build>/` so existing clients can load a new
+helper without reopening their windows. Existing frame tokens finish through
+their original helper. The C ABI remains version 1.
 The adapter loads this helper in the cooperative app. `MeltySurfaceFrameBegin`
 opens a zero-duration NSAnimationContext group on the main thread;
 `MeltySurfaceFrameSet` applies content size and top-left displacement in one
@@ -76,6 +79,14 @@ Native modal border resizing keeps its existing AppKit path. Older services
 without the helper retain the GLFW setters. This groups geometry and buffer
 submission; visual compositor synchronization still requires live acceptance.
 
+The 0.2.2 helper also sets the native content view's layer placement to top-left
+when beginning the first cooperative frame, before any resize. AppKit's default scales the currently presented
+image to the new frame even when the new NSGL buffer has not arrived. Keeping
+the image at its original pixel scale removes this intermediate stretch. The
+placement persists beyond the animation group because presentation happens
+asynchronously. This introduces no settling timer, blocking GPU wait, or change
+to collision/input rules. [AppKit layer placement](https://developer.apple.com/documentation/appkit/nsview/layercontentsplacement-swift.property)
+
 The reference adapter is `meltygui/core/windowing/melty_windows.py`, wired
 through `titlebar`, `os_frame`, and `window_api`. Client applications need no
 new API calls. Ordinary app size requests stay separate from collision requests.
@@ -83,6 +94,46 @@ When capability is lost, the existing fixed-bound transition resets pending
 collision requests and their child compensation before rendering. Reconnection
 starts new gesture bookkeeping. Fullscreen/maximized/nonresizable surfaces
 remain fixed; no arbitrary OS-window repulsion is authorized.
+
+## Native background movement
+
+Version 0.2.3 optionally advertises `move_api:1` and `move_enabled:true`
+alongside `frame_library`. Movement requires the same live per-surface lease
+and the utility's left-move setting; older services/helpers remain supported
+without this optional capability. No screen recording is needed for this path.
+
+The app captures its original Cocoa left-mouse-down event inside the GLFW
+button callback with `MeltySurfaceMoveCapture(window, down)`. Its existing
+input routing gives controls, text, dividers, movable Melty windows and fixed
+popovers their normal priority. Only the lowest-priority, unclaimed native
+background target calls `MeltySurfaceMoveBegin(window)`. OS decorations do not
+disable this background target. The helper consumes the saved press once,
+rejects released/nonmovable/fullscreen windows, and hands that same event to
+[AppKit's native window move](https://developer.apple.com/documentation/appkit/nswindow/performdrag(with:)).
+The call returns immediately. Since WindowServer may consume mouse-up, the
+helper posts a release to the app's own window to clear GLFW and MeltyGUI input
+state. It never posts desktop input or moves another process's windows.
+
+Native geometry and rendering continue through the existing surface lifecycle;
+no position stream or synchronous mouse-event IPC is added. The utility keeps
+passing the full input sequence through for registered surfaces.
+
+`Diagnostics/SurfaceMoveTests.m` tests original-event identity, per-window
+isolation, release delivery, stale-press refusal and rapid regrab, using real
+AppKit objects with an intercepted native handoff. `Diagnostics/native-background-move.py`
+is the isolated interactive acceptance fixture: drag its striped background,
+then its orange control. The JSONL records native origin/size, handoff success,
+button state and control edits. Physical drag acceptance remains distinct from
+the mocked handoff and input-routing tests.
+
+On October 5 the signed 0.2.3 build 20 was installed with this optional move
+API. All 53 Swift tests, the native frame/move checks, and 117 focused MeltyGUI
+tests against a noneditable wheel passed. The wheel checks include adding
+pointer-safe move exports to an already-cached helper during hotswap. The
+installed helper also passed the 300-frame resize presentation probe: 588
+captures, zero stretching mismatches and zero marker-origin movement. Physical
+background/control drag acceptance is still pending; the desktop automation
+did not hold macOS's physical button state through a render frame.
 
 ## Verification
 
@@ -147,19 +198,48 @@ divider totals, native/layout replay snapshots and diagnostic history must
 start from the new press. A queued old release must not clear a newer press's
 coordinates. The native drag probe also covers this between-frame regrab.
 
-Cocoa requests quantize the two screen edges together, deriving the native
-span and displacement from that rectangle. Independently rounding a span and
-a displacement (especially half-point ties) made a fixed screen edge wobble
-by one point. Acknowledgements reconcile the origin as well as the span,
-without feeding this rounding back into the collision solver as a new drag.
-`Diagnostics/native-boundary-resize.py` exercises both axes through fractional
-growth at a display wall, stationary holds and reversal; 37 native samples
-per axis kept the fixed edge exactly on the wall.
+The later endpoint-rounding, cache gesture-boundary and resize-settling changes
+were rolled back at Lukas's request after the visible jitter persisted and
+left/top pushes snapped. `Diagnostics/native-boundary-resize.py` retains the
+isolated fractional screen-wall case as a diagnostic; its earlier passing
+result did not establish a fix for the reported visual jitter.
 
-App-owned Cocoa resizes have no post-release settling timeout. Native border
-resize bursts retain their existing settling policy, owned separately by each
-surface. Cached resize replay must deliver presses and releases immediately,
-as well as active drag events, so a new gesture can start while another tile
-is settling. This does not change double-right corner selection or collision
-constraints. Native geometry checks do not prove that all presentation jitter
-is gone; the larger pending-frame row-position reports need live verification.
+The input-only fixes were subsequently restored after the release/regrab delay
+returned: cooperative Cocoa callbacks no longer start the 150 ms native-resize
+settling tail, settling state belongs to each surface, and cached resize replay
+lets press/release events reach their receivers and cached ancestors. Unrelated
+tiles can still use cached replay. Endpoint-rounding and collision geometry
+changes remain rolled back; restoring input delivery does not establish a fix
+for single-frame stretching.
+
+The October 5 trace from editor process 93386 records ten transitions to
+`(-1, -1)` while a right-button resize remains held. At frame 11161 this
+changes the requested height from 1180 to 643; later samples incorporate
+the native origin shift into that unavailable pointer value and repeatedly
+push the left edge. The GLFW imgui backend uses this value when unfocused.
+The shared collision solver should not be changed to accommodate it. The
+Mac input/gesture ownership path and the pending-frame row-position reports
+remain unresolved; diagnostics stay enabled.
+
+## Presented-pixel regression
+
+`zsh Diagnostics/test-native-presentation.sh /absolute/python /tmp/capture-output`
+captures only its own diagnostic window using ScreenCaptureKit's current-process
+enumeration; it does not capture other apps or inject desktop input. An optional
+third argument selects a candidate `MeltySurfaceFrame.dylib`. The probe runs the
+real MeltyGUI render pipeline through 300 grow/shrink frames, moving the top/left
+edges, and stamps a 200px square at a fixed content position into the final back
+buffer. Captured dimensions and origin must remain constant. The JSONL and
+summary are retained in the output directory. App state is isolated there too.
+
+On October 5 the persisted regression against the old helper produced 375
+stretched captures out of 562 and 20px/23px marker-origin movement. Moving the
+placement setup before the first resize also fixed a startup-only mismatch
+caught by the noneditable-wheel check. The final signed build 19 passed two
+300-frame runs with that wheel (503 and 629 captures), with zero size mismatches
+and zero marker-origin movement. The installed-helper run averaged 14.0 ms
+(95th percentile 16.3 ms). Editor process 4203 was confirmed to have loaded the
+build 19 helper while retaining its previous helper mapping. These are
+presented-pixel checks on this Mac, not just solver geometry assertions;
+physical-gesture acceptance and the other collision warnings remain separate
+checks.

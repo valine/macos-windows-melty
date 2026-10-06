@@ -111,11 +111,10 @@ for app_dir in "$@"; do
         print -u2 -- "Missing CFBundleIdentifier: $app_dir"
         exit 2
     fi
-    surface_library="$app_dir/Contents/Frameworks/MeltySurfaceFrame.dylib"
-    if [[ -f "$surface_library" ]]; then
+    for surface_library in "$app_dir"/Contents/Frameworks/**/MeltySurfaceFrame.dylib(N); do
         /usr/bin/codesign --force --sign "$fingerprint" --keychain "$keychain" \
             --timestamp=none --identifier "$bundle_id.surface-frame" "$surface_library"
-    fi
+    done
     # Let codesign generate a certificate-bound requirement. An identifier-only
     # requirement would let unrelated code impersonate an already approved app.
     /usr/bin/codesign --force --sign "$fingerprint" --keychain "$keychain" \

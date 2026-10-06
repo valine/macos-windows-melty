@@ -41,7 +41,8 @@ final class AppModel: ObservableObject {
             if gestures.running { gestures.stop() }
             status = Settings.shared.enabled ? "Waiting for Accessibility permission" : "Paused"
         }
-        SurfaceBridge.shared.setEnabled(gestures.running && Settings.shared.enabled && sessionActive)
+        SurfaceBridge.shared.setEnabled(gestures.running && Settings.shared.enabled && sessionActive,
+                                        leftMove: Settings.shared.leftMove)
     }
     func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
