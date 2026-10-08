@@ -372,3 +372,24 @@ All 51 tests passed and the signed build launches with existing permissions.
 The GLFW probe is back to its baseline redraw behavior, so its inLiveResize trace
 can test the lifetime change without an app-side redraw workaround. Live
 collision behavior and the visual result are not yet verified.
+
+## Mission Control close shortcuts (Hammerspoon)
+
+`scripts/hammerspoon/mission-control-close.lua` supplies the separate Hammerspoon
+shortcut used on this Mac. Copy it into `~/.hammerspoon/` and load it from
+`init.lua` with `missionControlClose = require("mission-control-close").start()`.
+Remove the previous `deleteCloseTap` binding and reload Hammerspoon.
+
+In Mission Control, Delete/Forward Delete or middle-click closes the window
+thumbnail under the pointer. The resolver reads thumbnail bounds and exact `wid`
+values from WindowManager on macOS 27, or Dock on older versions. It never falls
+back to the focused window, matches by title, or uses normal desktop window
+bounds. Missing or overlapping targets do nothing; Desktop/Space controls are
+excluded. Modified shortcuts and inputs outside Mission Control pass through.
+Holding Delete closes at most one window per press.
+
+Regression checks (no real windows are closed):
+
+```sh
+hs -c 'dofile("/absolute/path/to/melty-windows/Diagnostics/mission-control-close-tests.lua")'
+```
