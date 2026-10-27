@@ -1,5 +1,5 @@
 /// AppKit can animate AX frame setters while Enhanced UI is enabled. Suspend
-/// that behavior for a resize gesture, then restore exactly the original state.
+/// that behavior for a move or resize gesture, then restore the original state.
 /// Leave it alone when built-in assistive technology is using it.
 public final class ResizeAnimationScope {
     private let allowed: Bool

@@ -58,12 +58,14 @@ final class WindowTarget {
     let initial: CGRect
     let windowID: CGWindowID
     let sampleIsUnobscured: Bool
+    let requiresUniformBackground: Bool
     var accessQueue: DispatchQueue { WindowAccessQueue.forProcess(pid) }
 
     init(element: AXUIElement, pid: pid_t, name: String, bundleID: String, initial: CGRect,
-         windowID: CGWindowID, sampleIsUnobscured: Bool) {
+         windowID: CGWindowID, sampleIsUnobscured: Bool, requiresUniformBackground: Bool = true) {
         self.element = element; self.pid = pid; self.name = name; self.bundleID = bundleID
         self.initial = initial; self.windowID = windowID; self.sampleIsUnobscured = sampleIsUnobscured
+        self.requiresUniformBackground = requiresUniformBackground
     }
 }
 
@@ -106,8 +108,10 @@ enum WindowAccess {
         }
         let bundle = app.bundleIdentifier ?? ""
         let name = app.localizedName ?? bundle
-        guard !exclusions.contains(bundle.lowercased()), !exclusions.contains(name.lowercased()),
-              bundle != "com.apple.finder" || AX.string(hit, kAXRoleAttribute) != "AXScrollArea" else { Trace.write("reject exclusion app=\(bundle)"); return nil }
+        // Finder uses scroll areas inside ordinary windows too (including its
+        // device detail pane). Reject the desktop through window eligibility
+        // and WindowServer matching below, not through the hit element's role.
+        guard !exclusions.contains(bundle.lowercased()), !exclusions.contains(name.lowercased()) else { Trace.write("reject exclusion app=\(bundle)"); return nil }
 
         let window = owningWindow(hit, pid: pid, point: point,
                                   allowSettingsFallback: resize && bundle == "com.apple.systempreferences")
@@ -122,8 +126,10 @@ enum WindowAccess {
               let frame = AX.frame(window), frame.contains(point) else { Trace.write("reject window eligibility"); return nil }
         AXUIElementSetMessagingTimeout(window, 0.04)
 
+        var requiresUniformBackground = true
         if !resize {
-            guard backgroundElement(hit, window: window) else { Trace.write("reject background AX role"); return nil }
+            guard let policy = backgroundElement(hit, window: window, bundleID: bundle) else { Trace.write("reject background AX role"); return nil }
+            requiresUniformBackground = policy.requiresUniformPixels
             let browsers = ["com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox", "com.brave.Browser", "com.microsoft.edgemac"]
             if browsers.contains(bundle) && point.y - frame.minY < 80 { Trace.write("reject browser toolbar"); return nil }
         }
@@ -147,7 +153,8 @@ enum WindowAccess {
         guard !SurfaceBridge.shared.owns(pid: pid, window: match.id) else { return nil }
         Trace.write("accept target window=\(match.id) unobscured=\(match.unobscured)")
         return WindowTarget(element: window, pid: pid, name: name, bundleID: bundle, initial: frame,
-                            windowID: match.id, sampleIsUnobscured: match.unobscured)
+                            windowID: match.id, sampleIsUnobscured: match.unobscured,
+                            requiresUniformBackground: requiresUniformBackground)
     }
 
     private static func owningWindow(_ hit: AXUIElement, pid: pid_t, point: CGPoint,
@@ -184,28 +191,29 @@ enum WindowAccess {
         return candidates[0]
     }
 
-    private static func backgroundElement(_ hit: AXUIElement, window: AXUIElement) -> Bool {
-        var policy = BackgroundHitPolicy()
+    private static func backgroundElement(_ hit: AXUIElement, window: AXUIElement, bundleID: String) -> BackgroundHitPolicy? {
+        var policy = BackgroundHitPolicy(bundleID: bundleID)
         var roles: [String] = []
         var current: AXUIElement? = hit
         // Web pages can have more than 16 layout containers. The gesture's
         // existing total deadline still bounds takeover if AX is slow.
-        for _ in 0..<64 {
+        for depth in 0..<64 {
             guard let item = current else {
                 Trace.write("background missing parent roles=\(roles.joined(separator: ">"))")
-                return false
+                return nil
             }
             let role = AX.string(item, kAXRoleAttribute) ?? "missing"
             roles.append(role)
-            guard policy.permits(role: role) else {
+            let identifier = depth == 0 && bundleID == "com.apple.iChat" ? AX.string(item, kAXIdentifierAttribute) : nil
+            guard policy.permits(role: role, identifier: identifier) else {
                 Trace.write("background protected roles=\(roles.joined(separator: ">"))")
-                return false
+                return nil
             }
-            if CFEqual(item, window) { return true }
+            if CFEqual(item, window) { return policy }
             current = AX.element(item, kAXParentAttribute)
         }
         Trace.write("background ancestor limit roles=\(roles.joined(separator: ">"))")
-        return false
+        return nil
     }
 
     static func isStillAtStart(_ target: WindowTarget) -> Bool {
@@ -349,7 +357,7 @@ final class FrameWriter {
         busy = true
         let target = target
         target.accessQueue.async { [self] in
-            if request.corner != nil { self.animationScope.begin() }
+            self.animationScope.begin()
             // Queue waiting and the initial animation-scope AX call can take
             // multiple mouse samples. Select after both, not at dispatch time.
             guard let request = self.requests.take() else {

@@ -173,7 +173,7 @@ behavior; those remain live acceptance checks.
   edges to logical points and skip unchanged attributes. Position and size
   readbacks share one AX query, and changing readbacks are not used as size limits.
   AX-unresponsive apps can decline a gesture.
-- During a resize gesture, suspend `AXEnhancedUserInterface` if it was enabled
+- During a move or resize gesture, suspend `AXEnhancedUserInterface` if it was enabled
   and restore it after completion, failure, or quit. This avoids AppKit animating
   successive AX writes, a workaround also used by
   [Rectangle](https://github.com/rxhanson/Rectangle/blob/main/Rectangle/AccessibilityElement.swift)
@@ -372,6 +372,17 @@ All 51 tests passed and the signed build launches with existing permissions.
 The GLFW probe is back to its baseline redraw behavior, so its inLiveResize trace
 can test the lifetime change without an app-side redraw workaround. Live
 collision behavior and the visual result are not yet verified.
+
+Version 0.2.4 removes the Finder-wide scroll-area rejection. Direct hits on empty
+Finder lists/outlines/tables can now pass background pixel detection; rows, icons,
+text, and controls retain their native gestures. Messages' directly hit
+`TranscriptCollectionView` background can move even with photo wallpaper and
+does not wait for a screenshot. This exception does not apply to message bubbles,
+descendants, the conversation sidebar, or other apps. Window eligibility and
+occlusion checks remain in force. The Enhanced UI animation workaround also
+covers AX moves, with the same restoration and assistive-technology safeguards.
+Regression tests cover these hit distinctions; physical dragging is still needed
+to verify perceived latency on each target app.
 
 ## Mission Control close shortcuts (Hammerspoon)
 

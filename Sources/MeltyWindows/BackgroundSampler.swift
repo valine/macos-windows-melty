@@ -6,6 +6,14 @@ enum BackgroundSampler {
     static func check(target: WindowTarget, point: CGPoint, radius: Int, tolerance: Int,
                       display: DisplayArea, completion: @escaping (Bool) -> Void) {
         guard CGPreflightScreenCaptureAccess(), target.sampleIsUnobscured else { completion(false); return }
+        // Messages explicitly identifies its empty transcript surface. Its
+        // wallpaper need not be a flat color, and no screenshot round trip is
+        // needed after AX ancestry and WindowServer checks have accepted it.
+        if !target.requiresUniformBackground {
+            Trace.write("background accepted semantic transcript")
+            completion(true)
+            return
+        }
         let rect = WindowGeometry.sampleRect(at: point, frame: target.initial, radius: radius)
         // An offscreen part of a sample has no meaningful app pixels.
         guard display.frame.contains(rect), rect.width > 0, rect.height > 0 else { completion(false); return }
